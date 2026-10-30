@@ -17,29 +17,37 @@ export type ArchiveConfig = {
   snapshotPrefix: string;
 };
 
-export type ArtStoreConfig = {
+export type RuntimeStoreConfig = {
   publicRoot: string;
   manifest: string;
   hydratedRecord: string;
   trackedDir: string;
   extensions: string[];
   store: StoreLocation;
+};
+
+export type ArtStoreConfig = Partial<RuntimeStoreConfig> & {
   publish?: { host: string; projectDir: string };
   archive?: ArchiveConfig;
 };
 
-export type ResolvedConfig = {
-  repoRoot: string;
+export type ResolvedRuntime = {
   publicRoot: string;
   publicRootRelative: string;
   manifestPath: string;
   recordPath: string;
   layout: ArtLayout;
   store: StoreLocation;
+};
+
+export type ResolvedConfig = {
+  repoRoot: string;
+  runtime: ResolvedRuntime | null;
   publish: RemoteStoreTarget | null;
   archive: { remote: string; settings: ArchiveSettings } | null;
 };
 
+const RUNTIME_KEYS = ['publicRoot', 'manifest', 'hydratedRecord', 'trackedDir', 'extensions', 'store'] as const;
 const EXTENSION_PATTERN = /^[a-z0-9]+$/;
 
 type Fields = Record<string, unknown>;
@@ -82,32 +90,38 @@ export function findConfigFile(startDir: string): string {
   }
 }
 
-export function resolveConfig(raw: unknown, repoRoot: string): ResolvedConfig {
-  const fields = asObject(raw, 'config');
+function resolveRuntime(fields: Fields, repoRoot: string): ResolvedRuntime | null {
+  const missing = RUNTIME_KEYS.filter((key) => fields[key] === undefined);
+  if (missing.length === RUNTIME_KEYS.length) return null;
+  if (missing.length > 0) {
+    throw new Error(`${CONFIG_FILE_NAME}: runtime store settings are all-or-nothing, missing: ${missing.join(', ')}`);
+  }
   const publicRootRelative = relativeSubdir(fields, 'publicRoot', '').split(path.sep).join('/');
   const store = asObject(fields.store, 'store');
-  const storeLocation: StoreLocation = {
-    dirName: relativeSubdir(store, 'dir', 'store.'),
-    machineCache: relativeSubdir(store, 'machineCache', 'store.'),
-  };
-  const layout: ArtLayout = {
-    trackedDir: relativeSubdir(fields, 'trackedDir', ''),
-    extensions: extensionsField(fields, 'extensions', ''),
-  };
-  const publish = fields.publish === undefined ? null : asObject(fields.publish, 'publish');
-  const archive = fields.archive === undefined ? null : asObject(fields.archive, 'archive');
   return {
-    repoRoot,
     publicRoot: path.join(repoRoot, publicRootRelative),
     publicRootRelative,
     manifestPath: path.join(repoRoot, relativeSubdir(fields, 'manifest', '')),
     recordPath: path.join(repoRoot, relativeSubdir(fields, 'hydratedRecord', '')),
-    layout,
-    store: storeLocation,
-    publish: publish && {
+    layout: { trackedDir: relativeSubdir(fields, 'trackedDir', ''), extensions: extensionsField(fields, 'extensions', '') },
+    store: { dirName: relativeSubdir(store, 'dir', 'store.'), machineCache: relativeSubdir(store, 'machineCache', 'store.') },
+  };
+}
+
+export function resolveConfig(raw: unknown, repoRoot: string): ResolvedConfig {
+  const fields = asObject(raw, 'config');
+  const runtime = resolveRuntime(fields, repoRoot);
+  const publish = fields.publish === undefined ? null : asObject(fields.publish, 'publish');
+  const archive = fields.archive === undefined ? null : asObject(fields.archive, 'archive');
+  if (!runtime && !archive) throw new Error(`${CONFIG_FILE_NAME}: needs the runtime store settings, an "archive" section, or both`);
+  if (publish && !runtime) throw new Error(`${CONFIG_FILE_NAME}: "publish" needs the runtime store settings`);
+  return {
+    repoRoot,
+    runtime,
+    publish: publish && runtime && {
       host: stringField(publish, 'host', 'publish.'),
       projectDir: stringField(publish, 'projectDir', 'publish.'),
-      storeName: path.basename(storeLocation.dirName),
+      storeName: path.basename(runtime.store.dirName),
     },
     archive: archive && {
       remote: stringField(archive, 'remote', 'archive.'),

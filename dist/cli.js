@@ -54,20 +54,24 @@ function parseArgs(argv) {
     }
     return options;
 }
-function buildContext(config, options) {
-    const publicRoot = options.values.get('--public-root') ?? config.publicRoot;
+function buildContext(command, config, options) {
+    const { runtime } = config;
+    if (!runtime)
+        throw new Error(`art-store ${command} needs the runtime store settings (publicRoot, manifest, hydratedRecord, trackedDir, extensions, store) in ${config_1.CONFIG_FILE_NAME}`);
+    const publicRoot = options.values.get('--public-root') ?? runtime.publicRoot;
     return {
         config,
+        runtime,
         options,
         publicRoot,
-        manifestPath: options.values.get('--manifest') ?? config.manifestPath,
-        recordPath: options.values.get('--hydrated-record') ?? config.recordPath,
-        storeDir: options.values.get('--store') ?? (0, store_location_1.resolveArtStoreDir)(config.repoRoot, config.store),
-        keySpace: { ...config.layout, publicRoot, publicRootRelative: config.publicRootRelative },
+        manifestPath: options.values.get('--manifest') ?? runtime.manifestPath,
+        recordPath: options.values.get('--hydrated-record') ?? runtime.recordPath,
+        storeDir: options.values.get('--store') ?? (0, store_location_1.resolveArtStoreDir)(config.repoRoot, runtime.store),
+        keySpace: { ...runtime.layout, publicRoot, publicRootRelative: runtime.publicRootRelative },
     };
 }
 function readManifest(context) {
-    return (0, manifest_1.parseArtManifest)(JSON.parse(node_fs_1.default.readFileSync(context.manifestPath, 'utf8')), context.config.layout);
+    return (0, manifest_1.parseArtManifest)(JSON.parse(node_fs_1.default.readFileSync(context.manifestPath, 'utf8')), context.runtime.layout);
 }
 function requirePublishTarget(config) {
     if (!config.publish)
@@ -90,7 +94,7 @@ function runRsync(command) {
     return (0, node_child_process_1.execFileSync)('rsync', command.args, { input: command.stdin, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 function runMaterialize(context, manifest) {
-    const result = (0, core_1.materialize)(manifest, context.publicRoot, context.storeDir, context.config.layout.extensions);
+    const result = (0, core_1.materialize)(manifest, context.publicRoot, context.storeDir, context.runtime.layout.extensions);
     console.log(`materialize: ${result.created} created, ${result.present} already present (${context.storeDir})`);
     const problems = [
         ...(0, core_1.formatCapped)('corrupt object', result.corrupt),
@@ -105,7 +109,7 @@ function publish(context, manifest) {
     const target = requirePublishTarget(context.config);
     const { storeDir } = context;
     const repair = context.options.flags.has('--repair');
-    const names = [...(0, core_1.objectNames)(manifest, context.config.layout.extensions).keys()].sort();
+    const names = [...(0, core_1.objectNames)(manifest, context.runtime.layout.extensions).keys()].sort();
     if (context.options.flags.has('--dry-run')) {
         console.log(`dry run: ${names.length} objects from ${storeDir}`);
         console.log(describeCommand('ssh', { args: (0, core_1.buildMkdirCommand)(target), stdin: '' }));
@@ -182,7 +186,7 @@ function runPull(context) {
         publicRoot: context.publicRoot,
         storeDir: context.storeDir,
         target: requirePublishTarget(context.config),
-        extensions: context.config.layout.extensions,
+        extensions: context.runtime.layout.extensions,
         record: (0, manifest_edit_1.readHydratedRecord)(context.recordPath),
         runner: (command) => {
             runRsync(command);
@@ -199,13 +203,13 @@ function runPull(context) {
     return result.exitCode;
 }
 function runCheckUntracked(context) {
-    const { config } = context;
-    const out = (0, node_child_process_1.execFileSync)('git', ['ls-files', '-z', '--', `${config.publicRootRelative}/${config.layout.trackedDir}`], {
+    const { config, runtime } = context;
+    const out = (0, node_child_process_1.execFileSync)('git', ['ls-files', '-z', '--', `${runtime.publicRootRelative}/${runtime.layout.trackedDir}`], {
         cwd: config.repoRoot,
         encoding: 'utf8',
         maxBuffer: 64 * 1024 * 1024,
     });
-    const tracked = (0, manifest_edit_1.findTrackedImages)(out.split('\0').filter(Boolean), config.layout.extensions);
+    const tracked = (0, manifest_edit_1.findTrackedImages)(out.split('\0').filter(Boolean), runtime.layout.extensions);
     if (tracked.length === 0) {
         console.log('check-untracked OK: no art images are tracked');
         return 0;
@@ -215,7 +219,7 @@ function runCheckUntracked(context) {
     return 1;
 }
 function runVerifyStore(context) {
-    const result = (0, core_1.verifyStore)(readManifest(context), context.storeDir, context.config.layout.extensions);
+    const result = (0, core_1.verifyStore)(readManifest(context), context.storeDir, context.runtime.layout.extensions);
     const problems = [...(0, core_1.formatCapped)('missing object', result.missing), ...(0, core_1.formatCapped)('corrupt object', result.corrupt)];
     if (problems.length > 0) {
         printProblems(problems);
@@ -235,13 +239,13 @@ function withArchiveRemote(config, action) {
         remote.close();
     }
 }
-function runArchive(context) {
-    withArchiveRemote(context.config, (settings, remote) => (0, archive_1.archive)(settings, remote, { log: console.log }));
+function runArchive(config) {
+    withArchiveRemote(config, (settings, remote) => (0, archive_1.archive)(settings, remote, { log: console.log }));
     return 0;
 }
-function runArchivePull(context) {
-    const prefix = context.options.positionals[0] ?? '';
-    const result = withArchiveRemote(context.config, (settings, remote) => (0, archive_1.archivePull)(settings, remote, prefix));
+function runArchivePull(config, options) {
+    const prefix = options.positionals[0] ?? '';
+    const result = withArchiveRemote(config, (settings, remote) => (0, archive_1.archivePull)(settings, remote, prefix));
     if (result.failed.length > 0) {
         printProblems(result.failed.map((failedPath) => `${failedPath}: FAILED`));
         console.error(`archive-pull: ${result.failed.length} of ${result.selected} files do not match the manifest`);
@@ -252,20 +256,21 @@ function runArchivePull(context) {
 }
 function main(argv, cwd = process.cwd()) {
     const options = parseArgs(argv);
+    const runtimeCommand = (run) => (config) => run(buildContext(options.command, config, options));
     const commands = {
-        manifest: runManifestCommand,
-        pull: runPull,
-        'check-untracked': runCheckUntracked,
-        materialize: (context) => (runMaterialize(context, readManifest(context)) ? 0 : 1),
-        'verify-store': runVerifyStore,
-        publish: (context) => (publish(context, readManifest(context)) ? 0 : 1),
+        manifest: runtimeCommand(runManifestCommand),
+        pull: runtimeCommand(runPull),
+        'check-untracked': runtimeCommand(runCheckUntracked),
+        materialize: runtimeCommand((context) => (runMaterialize(context, readManifest(context)) ? 0 : 1)),
+        'verify-store': runtimeCommand(runVerifyStore),
+        publish: runtimeCommand((context) => (publish(context, readManifest(context)) ? 0 : 1)),
         archive: runArchive,
-        'archive-pull': runArchivePull,
+        'archive-pull': (config) => runArchivePull(config, options),
     };
     const run = commands[options.command];
     if (!run) {
         console.error(USAGE);
         return 1;
     }
-    return run(buildContext((0, config_1.loadConfig)(cwd), options));
+    return run((0, config_1.loadConfig)(cwd));
 }
