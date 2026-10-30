@@ -1,6 +1,6 @@
 {
   "name": "@andrewpopov/art-store-kit",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Content-addressed binary asset store: committed SHA-256 manifest, rsync-backed publish and pull, verified archives. Configured per repo by art-store.config.json; no fleet defaults in code.",
   "author": "Andrew Popov",
   "license": "MIT",
