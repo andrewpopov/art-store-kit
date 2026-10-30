@@ -12,27 +12,32 @@ export type ArchiveConfig = {
     requireMount: string;
     snapshotPrefix: string;
 };
-export type ArtStoreConfig = {
+export type RuntimeStoreConfig = {
     publicRoot: string;
     manifest: string;
     hydratedRecord: string;
     trackedDir: string;
     extensions: string[];
     store: StoreLocation;
+};
+export type ArtStoreConfig = Partial<RuntimeStoreConfig> & {
     publish?: {
         host: string;
         projectDir: string;
     };
     archive?: ArchiveConfig;
 };
-export type ResolvedConfig = {
-    repoRoot: string;
+export type ResolvedRuntime = {
     publicRoot: string;
     publicRootRelative: string;
     manifestPath: string;
     recordPath: string;
     layout: ArtLayout;
     store: StoreLocation;
+};
+export type ResolvedConfig = {
+    repoRoot: string;
+    runtime: ResolvedRuntime | null;
     publish: RemoteStoreTarget | null;
     archive: {
         remote: string;

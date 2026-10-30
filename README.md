@@ -36,6 +36,8 @@ Install from a git tag: `npm install github:andrewpopov/art-store-kit#v<version>
 
 `store.dir` is the local object store (in a worktree it resolves to the owning checkout's copy); in a lane-broker remote snapshot it is `$XDG_CACHE_HOME/<machineCache>` (default `~/.cache`). `ART_STORE_DIR` overrides both. The remote store lives at `<publish.projectDir>/<basename of store.dir>`. `publish` and `archive` are only needed by the commands that use them.
 
+The runtime settings (`publicRoot`, `manifest`, `hydratedRecord`, `trackedDir`, `extensions`, `store`) are one all-or-nothing group. A repo that only uses `archive` / `archive-pull` can omit all six and give just `archive`; a config with neither the group nor `archive` is an error, a partial group is an error, and `manifest`, `pull`, `check-untracked`, `materialize`, `verify-store` and `publish` fail naming the missing runtime settings. `publish` also requires the group.
+
 ## Commands
 
 `art-store <command>`, flags `--store`, `--manifest`, `--public-root`, `--hydrated-record` override the config.

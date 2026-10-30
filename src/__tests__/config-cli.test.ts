@@ -82,7 +82,7 @@ test('store dir: a worktree resolves to the owner checkout store', () => {
 test('config resolution names the missing or invalid field and has no defaults', () => {
   const repo = tempDir();
   const resolved = resolveConfig(validConfig, repo);
-  assert.equal(resolved.publicRoot, path.join(repo, 'apps/web/public'));
+  assert.equal(resolved.runtime?.publicRoot, path.join(repo, 'apps/web/public'));
   assert.equal(resolved.publish, null);
   assert.equal(resolved.archive, null);
   for (const key of Object.keys(validConfig)) {
@@ -162,4 +162,31 @@ test('cli: publish without a publish section and an unknown command fail clearly
   assert.equal(main(['bogus'], repo), 1);
   assert.match(err.mock.calls.flat().join('\n'), /usage: art-store/);
   assert.throws(() => main(['verify-store', '--nope'], repo), /Unknown argument: --nope/);
+});
+
+const archiveSection = { remote: 'r', root: '/data/a', sourceDir: 'src', extensions: ['png'], manifest: 'src/m.sha256', requireMount: '/data', snapshotPrefix: 'masters' };
+
+test('an archive-only config loads without runtime store settings', () => {
+  const resolved = resolveConfig({ archive: archiveSection }, tempDir());
+  assert.equal(resolved.runtime, null);
+  assert.equal(resolved.archive?.remote, 'r');
+});
+
+test('a config with neither runtime store settings nor archive, or publish without runtime, is rejected', () => {
+  assert.throws(() => resolveConfig({}, tempDir()), /runtime store settings, an "archive" section, or both/);
+  assert.throws(() => resolveConfig({ archive: archiveSection, publish: { host: 'h', projectDir: '/p' } }, tempDir()), /"publish" needs the runtime store settings/);
+});
+
+test('a partial runtime group is rejected naming the missing keys', () => {
+  const { manifest: _manifest, store: _store, ...partial } = validConfig;
+  assert.throws(() => resolveConfig({ ...partial, archive: archiveSection }, tempDir()), /all-or-nothing, missing: manifest, store/);
+});
+
+test('cli: runtime commands on an archive-only config fail by name, archive commands reach the archive section', () => {
+  const repo = tempDir();
+  fs.writeFileSync(path.join(repo, 'art-store.config.json'), JSON.stringify({ archive: archiveSection }));
+  for (const command of ['manifest', 'pull', 'check-untracked', 'materialize', 'verify-store', 'publish']) {
+    assert.throws(() => main([command], repo), new RegExp(`art-store ${command} needs the runtime store settings`));
+  }
+  assert.throws(() => main(['archive'], repo), (error: Error) => !/runtime store settings/.test(error.message));
 });
